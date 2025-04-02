@@ -52,6 +52,7 @@ pub struct ProxyHdrV2 {
     address: Address,
 }
 
+#[derive(Debug, Clone)]
 pub enum RemoteAddress {
     Local,
     Invalid,
