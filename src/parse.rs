@@ -65,30 +65,21 @@ pub(crate) fn parse_proxy_hdr_v2(input_data: &[u8]) -> nom::IResult<&[u8], Proxy
     let (input, _magic) = nom::bytes::streaming::tag(
         &b"\x0D\x0A\x0D\x0A\x00\x0D\x0A\x51\x55\x49\x54\x0A"[..],
     )(input_data)?;
-    tracing::debug!(?_magic);
 
-    let (input, (version, command)) = parse_bits(input)?;
-    tracing::debug!(?version);
-    tracing::debug!(?command);
+    let (input, (_version, command)) = parse_bits(input)?;
 
     let (input, protocol) = map_opt(be_u8, Protocol::new).parse(input)?;
 
     let (input, length) = nom::number::streaming::be_u16(input)?;
     let (remainder, input) = nom::bytes::streaming::take(length)(input)?;
 
-    tracing::debug!(?input);
-    tracing::debug!(?remainder);
-
     // Parse the address now based on what protocol was chosen.
     // FROM HERE we use bytes complete, because we have everything we need!
-    let (input, address) = match protocol {
+    let (_input, address) = match protocol {
         Protocol::Unspec => (input, Address::None),
         Protocol::TcpV4 | Protocol::UdpV4 => parse_addr_v4(input)?,
         Protocol::TcpV6 | Protocol::UdpV6 => parse_addr_v6(input)?,
     };
-
-    // If there are bytes remaining, we could continue to parse out any PP2 options.
-    tracing::debug!(?input);
 
     Ok((
         remainder,

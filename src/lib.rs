@@ -1,11 +1,7 @@
 use crate::parse::parse_proxy_hdr_v2;
-use std::net::SocketAddr;
 use std::num::NonZeroUsize;
-use tracing::{debug, error};
 
 mod parse;
-
-const HDR_SIZE_LIMIT: usize = 512;
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
 #[repr(u8)]
@@ -138,6 +134,10 @@ impl ProxyHdrV2 {
     where
         S: tokio::io::AsyncReadExt + std::marker::Unpin,
     {
+        use tracing::{debug, error};
+
+        const HDR_SIZE_LIMIT: usize = 512;
+
         let mut buf = vec![0; 16];
 
         // First we need to read the exact amount to get up to the *length* field. This will
