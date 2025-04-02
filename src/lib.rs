@@ -1,4 +1,5 @@
 use crate::parse::parse_proxy_hdr_v2;
+use std::net::SocketAddr;
 use std::num::NonZeroUsize;
 use tracing::{debug, error};
 
@@ -8,7 +9,7 @@ const HDR_SIZE_LIMIT: usize = 512;
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
 #[repr(u8)]
-pub enum Protocol {
+enum Protocol {
     Unspec = 0x00,
     TcpV4 = 0x11,
     UdpV4 = 0x12,
@@ -20,13 +21,13 @@ pub enum Protocol {
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
 #[repr(u8)]
-pub enum Command {
+enum Command {
     Local = 0x00,
     Proxy = 0x01,
 }
 
 #[derive(Debug, PartialEq, Eq, Clone)]
-pub enum Address {
+enum Address {
     None,
     V4 {
         src: std::net::SocketAddrV4,
@@ -44,11 +45,32 @@ pub enum Address {
 
 #[derive(Debug, Clone)]
 pub struct ProxyHdrV2 {
-    pub command: Command,
-    pub protocol: Protocol,
+    command: Command,
+    protocol: Protocol,
     // address_family: AddressFamily,
     // length: u16,
-    pub address: Address,
+    address: Address,
+}
+
+pub enum RemoteAddress {
+    Local,
+    Invalid,
+    TcpV4 {
+        src: std::net::SocketAddrV4,
+        dst: std::net::SocketAddrV4,
+    },
+    UdpV4 {
+        src: std::net::SocketAddrV4,
+        dst: std::net::SocketAddrV4,
+    },
+    TcpV6 {
+        src: std::net::SocketAddrV6,
+        dst: std::net::SocketAddrV6,
+    },
+    UdpV6 {
+        src: std::net::SocketAddrV6,
+        dst: std::net::SocketAddrV6,
+    },
 }
 
 #[derive(Debug)]
@@ -76,6 +98,25 @@ impl ProxyHdrV2 {
                 tracing::error!(?err);
                 Err(Error::Invalid)
             }
+        }
+    }
+
+    pub fn to_remote_addr(self) -> RemoteAddress {
+        match (self.command, self.protocol, self.address) {
+            (Command::Local, _, _) => RemoteAddress::Local,
+            (Command::Proxy, Protocol::TcpV4, Address::V4 { src, dst }) => {
+                RemoteAddress::TcpV4 { src, dst }
+            }
+            (Command::Proxy, Protocol::UdpV4, Address::V4 { src, dst }) => {
+                RemoteAddress::UdpV4 { src, dst }
+            }
+            (Command::Proxy, Protocol::TcpV6, Address::V6 { src, dst }) => {
+                RemoteAddress::TcpV6 { src, dst }
+            }
+            (Command::Proxy, Protocol::UdpV6, Address::V6 { src, dst }) => {
+                RemoteAddress::UdpV6 { src, dst }
+            }
+            _ => RemoteAddress::Invalid,
         }
     }
 }
