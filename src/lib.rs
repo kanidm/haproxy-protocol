@@ -7,7 +7,7 @@ use std::num::NonZeroUsize;
 
 #[derive(Debug)]
 #[repr(u8)]
-enum Protocol {
+pub enum Protocol {
     Unspec = 0x00,
     TcpV4 = 0x11,
     UdpV4 = 0x12,
@@ -34,7 +34,7 @@ impl Protocol {
 
 #[derive(Debug)]
 #[repr(u8)]
-enum Command {
+pub enum Command {
     Local = 0x00,
     Proxy = 0x01,
 }
@@ -50,7 +50,7 @@ impl Command {
 }
 
 #[derive(Debug)]
-enum Address {
+pub enum Address {
     None,
     V4 {
         src: std::net::SocketAddrV4,
@@ -67,12 +67,12 @@ enum Address {
 }
 
 #[derive(Debug)]
-struct ProxyHdrV2 {
-    command: Command,
-    protocol: Protocol,
+pub struct ProxyHdrV2 {
+    pub command: Command,
+    pub protocol: Protocol,
     // address_family: AddressFamily,
-    length: u16,
-    address: Address,
+    pub length: u16,
+    pub address: Address,
 }
 
 /*
@@ -123,7 +123,7 @@ impl ProxyHdrV2 {
 }
 
 #[derive(Debug)]
-enum Error {
+pub enum Error {
     Invalid,
     Incomplete { need: NonZeroUsize },
     UnableToComplete,
