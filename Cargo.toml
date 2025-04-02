@@ -1,0 +1,20 @@
+[package]
+name = "haproxy-protocol"
+version = "0.0.1"
+edition = "2024"
+description = "HAProxy Protocol"
+license = "MPL-2.0"
+homepage = "https://github.com/kanidm/haproxy-protocol/"
+repository = "https://github.com/kanidm/haproxy-protocol/"
+keywords = ["haproxy", "protocol", "proxy"]
+categories = ["network-programming"]
+
+[dependencies]
+nom = "8.0.0"
+tracing = "0.1"
+
+[dev-dependencies]
+tracing-subscriber = "0.3.19"
+tokio = { version = "1", features = ["rt", "macros"] }
+hex = "0.4"
+
