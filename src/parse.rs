@@ -95,7 +95,7 @@ pub(crate) fn parse_proxy_hdr_v2(input_data: &[u8]) -> nom::IResult<&[u8], Proxy
         ProxyHdrV2 {
             command,
             protocol,
-            length,
+            // length,
             address,
         },
     ))

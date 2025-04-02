@@ -1,7 +1,10 @@
 use crate::parse::parse_proxy_hdr_v2;
 use std::num::NonZeroUsize;
+use tracing::{debug, error};
 
 mod parse;
+
+const HDR_SIZE_LIMIT: usize = 512;
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
 #[repr(u8)]
@@ -44,8 +47,15 @@ pub struct ProxyHdrV2 {
     pub command: Command,
     pub protocol: Protocol,
     // address_family: AddressFamily,
-    length: u16,
+    // length: u16,
     pub address: Address,
+}
+
+#[derive(Debug)]
+pub enum Error {
+    Incomplete { need: NonZeroUsize },
+    Invalid,
+    UnableToComplete,
 }
 
 impl ProxyHdrV2 {
@@ -70,9 +80,92 @@ impl ProxyHdrV2 {
     }
 }
 
+#[cfg(feature = "tokio")]
 #[derive(Debug)]
-pub enum Error {
+pub enum AsyncReadError {
+    Io(std::io::Error),
     Invalid,
-    Incomplete { need: NonZeroUsize },
     UnableToComplete,
+    RequestTooLarge,
+    InconsistentRead,
+}
+
+#[cfg(feature = "tokio")]
+impl ProxyHdrV2 {
+    pub async fn parse_from_read<S>(mut stream: S) -> Result<(S, ProxyHdrV2), AsyncReadError>
+    where
+        S: tokio::io::AsyncReadExt + std::marker::Unpin,
+    {
+        let mut buf = vec![0; 16];
+
+        // First we need to read the exact amount to get up to the *length* field. This will
+        // let us then proceed to parse the early header and return how much we need to continue
+        // to read.
+        let mut took = stream
+            .read_exact(&mut buf)
+            .await
+            .map_err(AsyncReadError::Io)?;
+
+        match ProxyHdrV2::parse(&buf) {
+            // Okay, we got a valid header - this can occur with proxy for local conditions.
+            Ok((_, hdr)) => return Ok((stream, hdr)),
+            // We need more bytes, this is the precise amount we need.
+            Err(Error::Incomplete { need }) => {
+                let resize_to = buf.len() + usize::from(need);
+                // Limit the amount so that we don't overflow anything or allocate a buffer that
+                // is too large. Nice try hackers.
+                if resize_to > HDR_SIZE_LIMIT {
+                    error!(
+                        "proxy header request was larger than {} bytes, refusing to proceed.",
+                        HDR_SIZE_LIMIT
+                    );
+                    return Err(AsyncReadError::RequestTooLarge);
+                }
+                buf.resize(resize_to, 0);
+            }
+            Err(Error::Invalid) => {
+                debug!(proxy_binary_dump = %hex::encode(&buf));
+                error!("proxy header was invalid");
+                return Err(AsyncReadError::Invalid);
+            }
+            Err(Error::UnableToComplete) => {
+                debug!(proxy_binary_dump = %hex::encode(&buf));
+                error!("proxy header was incomplete");
+                return Err(AsyncReadError::UnableToComplete);
+            }
+        };
+
+        // Now read any remaining bytes into the buffer.
+        took += stream
+            .read_exact(&mut buf[16..])
+            .await
+            .map_err(AsyncReadError::Io)?;
+
+        match ProxyHdrV2::parse(&buf) {
+            Ok((hdr_took, _)) if hdr_took != took => {
+                // We took inconsistent byte amounts, error.
+                error!("proxy header read an inconsistent amount from stream.");
+                return Err(AsyncReadError::InconsistentRead);
+            }
+            Ok((_, hdr)) =>
+            // HAPPY!!!!!
+            {
+                Ok((stream, hdr))
+            }
+            Err(Error::Incomplete { need: _ }) => {
+                error!("proxy header could not be read to the end.");
+                return Err(AsyncReadError::UnableToComplete);
+            }
+            Err(Error::Invalid) => {
+                debug!(proxy_binary_dump = %hex::encode(&buf));
+                error!("proxy header was invalid");
+                return Err(AsyncReadError::Invalid);
+            }
+            Err(Error::UnableToComplete) => {
+                debug!(proxy_binary_dump = %hex::encode(&buf));
+                error!("proxy header was incomplete");
+                return Err(AsyncReadError::UnableToComplete);
+            }
+        }
+    }
 }
