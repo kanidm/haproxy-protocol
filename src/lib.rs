@@ -10,8 +10,10 @@
 #![deny(clippy::needless_pass_by_value)]
 #![deny(clippy::trivially_copy_pass_by_ref)]
 
-use crate::parse::parse_proxy_hdr_v2;
+use crate::parse::{parse_proxy_hdr_v1, parse_proxy_hdr_v2};
 use std::num::NonZeroUsize;
+
+const NZ_ONE: NonZeroUsize = NonZeroUsize::new(1).expect("Invalid compile time constant");
 
 mod parse;
 
@@ -52,15 +54,6 @@ enum Address {
 }
 
 #[derive(Debug, Clone)]
-pub struct ProxyHdrV2 {
-    command: Command,
-    protocol: Protocol,
-    // address_family: AddressFamily,
-    // length: u16,
-    address: Address,
-}
-
-#[derive(Debug, Clone)]
 pub enum RemoteAddress {
     Local,
     Invalid,
@@ -89,6 +82,15 @@ pub enum Error {
     UnableToComplete,
 }
 
+#[derive(Debug, Clone)]
+pub struct ProxyHdrV2 {
+    command: Command,
+    protocol: Protocol,
+    // address_family: AddressFamily,
+    // length: u16,
+    address: Address,
+}
+
 impl ProxyHdrV2 {
     pub fn parse(input_data: &[u8]) -> Result<(usize, Self), Error> {
         match parse_proxy_hdr_v2(input_data) {
@@ -97,6 +99,7 @@ impl ProxyHdrV2 {
                 Ok((took, hdr))
             }
             Err(nom::Err::Incomplete(nom::Needed::Size(need))) => Err(Error::Incomplete { need }),
+            // We always know exactly how much is needed for hdr v2
             Err(nom::Err::Incomplete(nom::Needed::Unknown)) => Err(Error::UnableToComplete),
 
             Err(nom::Err::Error(err)) => {
@@ -125,6 +128,47 @@ impl ProxyHdrV2 {
             (Command::Proxy, Protocol::UdpV6, Address::V6 { src, dst }) => {
                 RemoteAddress::UdpV6 { src, dst }
             }
+            _ => RemoteAddress::Invalid,
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct ProxyHdrV1 {
+    protocol: Protocol,
+    address: Address,
+}
+
+impl ProxyHdrV1 {
+    pub fn parse(input_data: &[u8]) -> Result<(usize, Self), Error> {
+        match parse_proxy_hdr_v1(input_data) {
+            Ok((remainder, hdr)) => {
+                let took = input_data.len() - remainder.len();
+                Ok((took, hdr))
+            }
+            Err(nom::Err::Incomplete(nom::Needed::Size(need))) => Err(Error::Incomplete { need }),
+            // We aren't sure how much we need but we need *something*.
+            Err(nom::Err::Incomplete(nom::Needed::Unknown)) => {
+                Err(Error::Incomplete { need: NZ_ONE })
+            }
+
+            Err(nom::Err::Error(err)) => {
+                tracing::error!(?err);
+                Err(Error::Invalid)
+            }
+            Err(nom::Err::Failure(err)) => {
+                tracing::error!(?err);
+                Err(Error::Invalid)
+            }
+        }
+    }
+
+    pub fn to_remote_addr(self) -> RemoteAddress {
+        match (self.protocol, self.address) {
+            (Protocol::TcpV4, Address::V4 { src, dst }) => RemoteAddress::TcpV4 { src, dst },
+            (Protocol::UdpV4, Address::V4 { src, dst }) => RemoteAddress::UdpV4 { src, dst },
+            (Protocol::TcpV6, Address::V6 { src, dst }) => RemoteAddress::TcpV6 { src, dst },
+            (Protocol::UdpV6, Address::V6 { src, dst }) => RemoteAddress::UdpV6 { src, dst },
             _ => RemoteAddress::Invalid,
         }
     }
