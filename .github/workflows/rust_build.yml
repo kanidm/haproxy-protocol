@@ -1,0 +1,60 @@
+---
+name: "Linux Build and Test"
+# Trigger the workflow on push to master or pull request
+"on":
+  push:
+    branches:
+      - master
+  pull_request:
+
+env:
+  SCCACHE_GHA_ENABLED: "true"
+  RUSTC_WRAPPER: "sccache"
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  rust_build:
+    runs-on: ubuntu-latest
+    env:
+      SCCACHE_GHA_ENABLED: true
+      RUSTC_WRAPPER: sccache
+      CARGO_INCREMENTAL: 0
+      CARGO_TERM_COLOR: always
+    steps:
+      - uses: actions/checkout@v5
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+      - name: Setup sccache
+        uses: mozilla-actions/sccache-action@v0.0.9
+
+      - name: "Build the workspace"
+        run: cargo build && cargo build --release
+      - name: "Run cargo test"
+        run: cargo test
+  rust_build_next:
+    # build future versions to find possible next-version bugs
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    env:
+      SCCACHE_GHA_ENABLED: true
+      RUSTC_WRAPPER: sccache
+      CARGO_INCREMENTAL: 0
+      CARGO_TERM_COLOR: always
+    strategy:
+      matrix:
+        rust_version: ["beta", "nightly"]
+    steps:
+      - uses: actions/checkout@v5
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: ${{ matrix.rust_version }}
+      - name: Setup sccache
+        uses: mozilla-actions/sccache-action@v0.0.9
+
+      - name: "Build the workspace"
+        run: cargo build && cargo build --release
+      - name: "Run cargo test"
+        run: cargo test --all-features --all-targets
