@@ -91,7 +91,9 @@ pub(crate) fn parse_proxy_hdr_v2(input_data: &[u8]) -> nom::IResult<&[u8], Proxy
     ))
 }
 
-const V1_MAX_LEN: usize = 107 - 6;
+pub const V1_MIN_LEN: usize = 15;
+pub const V1_MAX_LEN: usize = 107;
+const V1_MAX_WORK_LEN: usize = 107 - 6;
 
 fn bytes_to_str(input: &[u8]) -> nom::IResult<&[u8], &str> {
     str::from_utf8(input).map(|s| (input, s)).map_err(|_| {
@@ -108,9 +110,9 @@ pub(crate) fn parse_proxy_hdr_v1(input_data: &[u8]) -> nom::IResult<&[u8], Proxy
 
     // First, limit the input data to the maximum length of the header. We have to setup our
     // "return" array here that defines how much data we are actually taking from the input
-    let (ignore_crlf, working_data) = if input_data.len() > V1_MAX_LEN {
+    let (ignore_crlf, working_data) = if input_data.len() > V1_MAX_WORK_LEN {
         // Limit the input length.
-        let working_data = &input_data[..V1_MAX_LEN];
+        let working_data = &input_data[..V1_MAX_WORK_LEN];
 
         // Note that we use COMPLETE here so that we don't return that we need more data.
         nom::character::complete::not_line_ending(working_data)?
