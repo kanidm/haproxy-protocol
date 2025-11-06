@@ -1,5 +1,5 @@
 use crate::{Address, Command, Protocol, ProxyHdrV1, ProxyHdrV2};
-use nom::{combinator::map_opt, number::streaming::be_u8, Parser};
+use nom::{Parser, combinator::map_opt, number::streaming::be_u8};
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6};
 use std::str::FromStr;
 
