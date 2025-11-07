@@ -1,5 +1,5 @@
 use crate::{Address, Command, Protocol, ProxyHdrV1, ProxyHdrV2};
-use nom::{combinator::map_opt, number::streaming::be_u8, Parser};
+use nom::{Parser, combinator::map_opt, number::streaming::be_u8};
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6};
 use std::str::FromStr;
 
@@ -228,9 +228,10 @@ mod tests {
     fn request_local() {
         let _ = tracing_subscriber::fmt::try_init();
 
-        let sample = hex::decode("0d0a0d0a000d0a515549540a20000007030004a9b87e8f").unwrap();
+        let sample =
+            hex::decode("0d0a0d0a000d0a515549540a20000007030004a9b87e8f").expect("valid hex");
 
-        let (took, hdr) = ProxyHdrV2::parse(sample.as_slice()).unwrap();
+        let (took, hdr) = ProxyHdrV2::parse(sample.as_slice()).expect("should parse local addr");
 
         tracing::debug!(?hdr);
 
@@ -244,10 +245,10 @@ mod tests {
     fn request_proxy_v4() {
         let _ = tracing_subscriber::fmt::try_init();
 
-        let sample =
-            hex::decode("0d0a0d0a000d0a515549540a2111000cac180c76ac180b8fcdcb027d").unwrap();
+        let sample = hex::decode("0d0a0d0a000d0a515549540a2111000cac180c76ac180b8fcdcb027d")
+            .expect("valid hex");
 
-        let (took, hdr) = ProxyHdrV2::parse(sample.as_slice()).unwrap();
+        let (took, hdr) = ProxyHdrV2::parse(sample.as_slice()).expect("should parse v4 addr");
 
         tracing::debug!(?hdr);
 
@@ -257,8 +258,8 @@ mod tests {
         assert_eq!(
             hdr.address,
             Address::V4 {
-                src: SocketAddrV4::from_str("172.24.12.118:52683").unwrap(),
-                dst: SocketAddrV4::from_str("172.24.11.143:637").unwrap(),
+                src: SocketAddrV4::from_str("172.24.12.118:52683").expect("valid addr"),
+                dst: SocketAddrV4::from_str("172.24.11.143:637").expect("valid addr"),
             }
         );
     }
@@ -267,9 +268,9 @@ mod tests {
     fn request_proxy_v6() {
         let _ = tracing_subscriber::fmt::try_init();
 
-        let sample = hex::decode("0d0a0d0a000d0a515549540a212100242403580b7d88001200000000000001fe2403580b7d8800110000000000001043d34c027d").unwrap();
+        let sample = hex::decode("0d0a0d0a000d0a515549540a212100242403580b7d88001200000000000001fe2403580b7d8800110000000000001043d34c027d").expect("valid hex");
 
-        let (took, hdr) = ProxyHdrV2::parse(sample.as_slice()).unwrap();
+        let (took, hdr) = ProxyHdrV2::parse(sample.as_slice()).expect("should parse v6 addr");
 
         tracing::debug!(?hdr);
 
@@ -279,8 +280,8 @@ mod tests {
         assert_eq!(
             hdr.address,
             Address::V6 {
-                src: SocketAddrV6::from_str("[2403:580b:7d88:12::1fe]:54092").unwrap(),
-                dst: SocketAddrV6::from_str("[2403:580b:7d88:11::1043]:637").unwrap(),
+                src: SocketAddrV6::from_str("[2403:580b:7d88:12::1fe]:54092").expect("valid addr"),
+                dst: SocketAddrV6::from_str("[2403:580b:7d88:11::1043]:637").expect("valid addr"),
             }
         );
     }

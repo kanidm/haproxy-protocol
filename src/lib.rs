@@ -243,7 +243,7 @@ impl ProxyHdrV2 {
             Ok((hdr_took, _)) if hdr_took != took => {
                 // We took inconsistent byte amounts, error.
                 error!("proxy header read an inconsistent amount from stream.");
-                return Err(AsyncReadError::InconsistentRead);
+                Err(AsyncReadError::InconsistentRead)
             }
             Ok((_, hdr)) =>
             // HAPPY!!!!!
@@ -252,17 +252,17 @@ impl ProxyHdrV2 {
             }
             Err(Error::Incomplete { need: _ }) => {
                 error!("proxy header could not be read to the end.");
-                return Err(AsyncReadError::UnableToComplete);
+                Err(AsyncReadError::UnableToComplete)
             }
             Err(Error::Invalid) => {
                 debug!(proxy_binary_dump = %hex::encode(&buf));
                 error!("proxy header was invalid");
-                return Err(AsyncReadError::Invalid);
+                Err(AsyncReadError::Invalid)
             }
             Err(Error::UnableToComplete) => {
                 debug!(proxy_binary_dump = %hex::encode(&buf));
                 error!("proxy header was incomplete");
-                return Err(AsyncReadError::UnableToComplete);
+                Err(AsyncReadError::UnableToComplete)
             }
         }
     }

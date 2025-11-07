@@ -1,0 +1,4 @@
+[codespell]
+ignore-words = .codespell_ignore
+skip = ./target
+
