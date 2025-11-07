@@ -313,12 +313,12 @@ impl ProxyHdrV1 {
                     continue;
                 }
                 Err(Error::Invalid) => {
-                    debug!(proxy_binary_dump = %hex::encode(&buf));
+                    debug!(proxy_binary_dump = %hex::encode(buf));
                     error!("proxy header was invalid");
                     return Err(AsyncReadError::Invalid);
                 }
                 Err(Error::UnableToComplete) => {
-                    debug!(proxy_binary_dump = %hex::encode(&buf));
+                    debug!(proxy_binary_dump = %hex::encode(buf));
                     error!("proxy header was incomplete");
                     return Err(AsyncReadError::UnableToComplete);
                 }
