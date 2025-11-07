@@ -91,7 +91,9 @@ pub(crate) fn parse_proxy_hdr_v2(input_data: &[u8]) -> nom::IResult<&[u8], Proxy
     ))
 }
 
+#[cfg(feature = "tokio")]
 pub const V1_MIN_LEN: usize = 15;
+#[cfg(feature = "tokio")]
 pub const V1_MAX_LEN: usize = 107;
 const V1_MAX_WORK_LEN: usize = 107 - 6;
 

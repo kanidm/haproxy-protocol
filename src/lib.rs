@@ -10,8 +10,11 @@
 #![deny(clippy::needless_pass_by_value)]
 #![deny(clippy::trivially_copy_pass_by_ref)]
 
-use crate::parse::{V1_MAX_LEN, V1_MIN_LEN, parse_proxy_hdr_v1, parse_proxy_hdr_v2};
+use crate::parse::{parse_proxy_hdr_v1, parse_proxy_hdr_v2};
 use std::num::NonZeroUsize;
+
+#[cfg(feature = "tokio")]
+use crate::parse::{V1_MAX_LEN, V1_MIN_LEN};
 
 const NZ_ONE: NonZeroUsize = NonZeroUsize::new(1).expect("Invalid compile time constant");
 
