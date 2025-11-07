@@ -13,6 +13,9 @@
 use crate::parse::{parse_proxy_hdr_v1, parse_proxy_hdr_v2};
 use std::num::NonZeroUsize;
 
+#[cfg(feature = "tokio")]
+use crate::parse::{V1_MAX_LEN, V1_MIN_LEN};
+
 const NZ_ONE: NonZeroUsize = NonZeroUsize::new(1).expect("Invalid compile time constant");
 
 mod parse;
@@ -186,7 +189,7 @@ pub enum AsyncReadError {
 
 #[cfg(feature = "tokio")]
 impl ProxyHdrV2 {
-    pub async fn parse_from_read<S>(mut stream: S) -> Result<(S, ProxyHdrV2), AsyncReadError>
+    pub async fn parse_from_read<S>(mut stream: S) -> Result<(S, Self), AsyncReadError>
     where
         S: tokio::io::AsyncReadExt + std::marker::Unpin,
     {
@@ -265,5 +268,61 @@ impl ProxyHdrV2 {
                 Err(AsyncReadError::UnableToComplete)
             }
         }
+    }
+}
+
+#[cfg(feature = "tokio")]
+impl ProxyHdrV1 {
+    pub async fn parse_from_read<S>(mut stream: S) -> Result<(S, Self), AsyncReadError>
+    where
+        S: tokio::io::AsyncReadExt + std::marker::Unpin,
+    {
+        use tracing::{debug, error};
+
+        // This is the maximum size of the buffer we could possibly need.
+        let mut buf = [0; V1_MAX_LEN + 1];
+
+        // First we need to read the exact amount to get up to the *length* field. This will
+        // let us then proceed to parse the early header and return how much we need to continue
+        // to read.
+        let mut took = stream
+            .read_exact(&mut buf[..V1_MIN_LEN])
+            .await
+            .map_err(AsyncReadError::Io)?;
+
+        loop {
+            match ProxyHdrV1::parse(&buf) {
+                Ok((hdr_took, _)) if hdr_took != took => {
+                    // We took inconsistent byte amounts, error.
+                    error!("proxy header read an inconsistent amount from stream.");
+                    return Err(AsyncReadError::InconsistentRead);
+                }
+                Ok((_, hdr)) =>
+                // HAPPY!!!!!
+                {
+                    return Ok((stream, hdr));
+                }
+                Err(Error::Incomplete { need }) => {
+                    // We need more data, read it and then continue the loop.
+                    // Now read any remaining bytes into the buffer.
+                    took += stream
+                        .read_exact(&mut buf[took..took + need.get()])
+                        .await
+                        .map_err(AsyncReadError::Io)?;
+
+                    continue;
+                }
+                Err(Error::Invalid) => {
+                    debug!(proxy_binary_dump = %hex::encode(buf));
+                    error!("proxy header was invalid");
+                    return Err(AsyncReadError::Invalid);
+                }
+                Err(Error::UnableToComplete) => {
+                    debug!(proxy_binary_dump = %hex::encode(buf));
+                    error!("proxy header was incomplete");
+                    return Err(AsyncReadError::UnableToComplete);
+                }
+            }
+        } // end loop
     }
 }
