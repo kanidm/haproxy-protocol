@@ -2,6 +2,7 @@ use crate::{Address, Command, Protocol, ProxyHdrV1, ProxyHdrV2};
 use nom::{Parser, combinator::map_opt, number::streaming::be_u8};
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6};
 use std::str::FromStr;
+use tracing::debug;
 
 impl Protocol {
     fn new(input: u8) -> Option<Self> {
@@ -60,12 +61,21 @@ fn parse_addr_v6(input: &[u8]) -> nom::IResult<&[u8], Address> {
     Ok((input, Address::V6 { src, dst }))
 }
 
-pub(crate) fn parse_proxy_hdr_v2(input_data: &[u8]) -> nom::IResult<&[u8], ProxyHdrV2> {
-    let (input, _magic) = nom::bytes::streaming::tag(
-        &b"\x0D\x0A\x0D\x0A\x00\x0D\x0A\x51\x55\x49\x54\x0A"[..],
-    )(input_data)?;
+/// This is the signature that start a v2 proxy protocol header.
+const SIGNATURE_V2: &[u8; 12] = b"\x0D\x0A\x0D\x0A\x00\x0D\x0A\x51\x55\x49\x54\x0A";
 
-    let (input, (_version, command)) = parse_bits(input)?;
+pub(crate) fn parse_proxy_hdr_v2(input_data: &[u8]) -> nom::IResult<&[u8], ProxyHdrV2> {
+    let (input, _magic) = nom::bytes::streaming::tag(&SIGNATURE_V2[..])(input_data)
+        .inspect_err(|err| debug!(error=%err, "Missing Proxy v2 signature"))?;
+
+    let (input, (version, command)) = parse_bits(input)?;
+    if version != 2 {
+        debug!(version = version, "Invalid version expected 2");
+        return Err(nom::Err::Failure(nom::error::Error {
+            input,
+            code: nom::error::ErrorKind::Tag,
+        }));
+    }
 
     let (input, protocol) = map_opt(be_u8, Protocol::new).parse(input)?;
 
@@ -108,7 +118,8 @@ fn bytes_to_str(input: &[u8]) -> nom::IResult<&[u8], &str> {
 
 pub(crate) fn parse_proxy_hdr_v1(input_data: &[u8]) -> nom::IResult<&[u8], ProxyHdrV1> {
     // Do we have the correct header? If not, no point trying to continue.
-    let (input_data, _magic) = nom::bytes::streaming::tag("PROXY ")(input_data)?;
+    let (input_data, _magic) = nom::bytes::streaming::tag("PROXY ")(input_data)
+        .inspect_err(|err| debug!(error=%err, "Missing Proxy v1 signature"))?;
 
     // First, limit the input data to the maximum length of the header. We have to setup our
     // "return" array here that defines how much data we are actually taking from the input
