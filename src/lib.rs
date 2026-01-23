@@ -217,7 +217,7 @@ impl ProxyHdrV2 {
                 // is too large. Nice try hackers.
                 if resize_to > HDR_SIZE_LIMIT {
                     error!(
-                        "proxy header request was larger than {} bytes, refusing to proceed.",
+                        "proxy v2 header request was larger than {} bytes, refusing to proceed.",
                         HDR_SIZE_LIMIT
                     );
                     return Err(AsyncReadError::RequestTooLarge);
@@ -226,12 +226,12 @@ impl ProxyHdrV2 {
             }
             Err(Error::Invalid) => {
                 debug!(proxy_binary_dump = %hex::encode(&buf));
-                error!("proxy header was invalid");
+                error!("proxy v2header was invalid");
                 return Err(AsyncReadError::Invalid);
             }
             Err(Error::UnableToComplete) => {
                 debug!(proxy_binary_dump = %hex::encode(&buf));
-                error!("proxy header was incomplete");
+                error!("proxy v2 header was incomplete");
                 return Err(AsyncReadError::UnableToComplete);
             }
         };
@@ -245,7 +245,7 @@ impl ProxyHdrV2 {
         match ProxyHdrV2::parse(&buf) {
             Ok((hdr_took, _)) if hdr_took != took => {
                 // We took inconsistent byte amounts, error.
-                error!("proxy header read an inconsistent amount from stream.");
+                error!("proxy v2 header read an inconsistent amount from stream.");
                 Err(AsyncReadError::InconsistentRead)
             }
             Ok((_, hdr)) =>
@@ -254,17 +254,17 @@ impl ProxyHdrV2 {
                 Ok((stream, hdr))
             }
             Err(Error::Incomplete { need: _ }) => {
-                error!("proxy header could not be read to the end.");
+                error!("proxy v2 header could not be read to the end.");
                 Err(AsyncReadError::UnableToComplete)
             }
             Err(Error::Invalid) => {
                 debug!(proxy_binary_dump = %hex::encode(&buf));
-                error!("proxy header was invalid");
+                error!("proxy v2 header was invalid");
                 Err(AsyncReadError::Invalid)
             }
             Err(Error::UnableToComplete) => {
                 debug!(proxy_binary_dump = %hex::encode(&buf));
-                error!("proxy header was incomplete");
+                error!("proxy v2 header was incomplete");
                 Err(AsyncReadError::UnableToComplete)
             }
         }
@@ -294,7 +294,7 @@ impl ProxyHdrV1 {
             match ProxyHdrV1::parse(&buf) {
                 Ok((hdr_took, _)) if hdr_took != took => {
                     // We took inconsistent byte amounts, error.
-                    error!("proxy header read an inconsistent amount from stream.");
+                    error!("proxy v1 header read an inconsistent amount from stream.");
                     return Err(AsyncReadError::InconsistentRead);
                 }
                 Ok((_, hdr)) =>
@@ -314,12 +314,12 @@ impl ProxyHdrV1 {
                 }
                 Err(Error::Invalid) => {
                     debug!(proxy_binary_dump = %hex::encode(buf));
-                    error!("proxy header was invalid");
+                    error!("proxy v1 header was invalid");
                     return Err(AsyncReadError::Invalid);
                 }
                 Err(Error::UnableToComplete) => {
                     debug!(proxy_binary_dump = %hex::encode(buf));
-                    error!("proxy header was incomplete");
+                    error!("proxy v1 header was incomplete");
                     return Err(AsyncReadError::UnableToComplete);
                 }
             }
