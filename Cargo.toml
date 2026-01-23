@@ -22,6 +22,6 @@ tokio = { version = "1", features = ["io-util"], optional = true }
 
 
 [dev-dependencies]
-tracing-subscriber = "0.3.19"
+tracing-subscriber = "0.3.22"
 tokio = { version = "1", features = ["rt", "macros"] }
-
+pcap-parser = { version = "0.17.0", features = ["data", "serialize"] }
