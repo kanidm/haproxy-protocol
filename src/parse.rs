@@ -426,4 +426,28 @@ mod tests {
 
         assert!(matches!(err, Error::Invalid));
     }
+
+    #[test]
+    fn request_proxyv1_kanidm_4084() {
+        let _ = tracing_subscriber::fmt::try_init();
+
+        // hex
+        // 50524f585920544350342039312e3232312e3133382e33332039312e3232312e3133382e313036203437373830203633360d0a
+
+        let data = "PROXY TCP4 91.221.138.33 91.221.138.106 47780 636\r\n";
+
+        let (took, hdr) = ProxyHdrV1::parse(data.as_bytes()).unwrap();
+        assert_eq!(took, 51);
+
+        tracing::debug!(?hdr);
+
+        assert_eq!(hdr.protocol, Protocol::TcpV4);
+        assert_eq!(
+            hdr.address,
+            Address::V4 {
+                src: SocketAddrV4::from_str("91.221.138.33:47780").unwrap(),
+                dst: SocketAddrV4::from_str("91.221.138.106:636").unwrap(),
+            }
+        );
+    }
 }
