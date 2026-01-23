@@ -101,11 +101,10 @@ pub(crate) fn parse_proxy_hdr_v2(input_data: &[u8]) -> nom::IResult<&[u8], Proxy
     ))
 }
 
-#[cfg(any(test, feature = "tokio"))]
-pub const V1_MIN_LEN: usize = 15;
-#[cfg(any(test, feature = "tokio"))]
+#[cfg(any(feature = "tokio", test))]
+pub const V1_MIN_LEN: usize = 32; // `PROXY TCP4 1.1.1.1 2.2.2.2 1 1rn`
 pub const V1_MAX_LEN: usize = 107;
-const V1_MAX_WORK_LEN: usize = 107 - 6;
+const V1_MAX_WORK_LEN: usize = V1_MAX_LEN - 6; // 6 is the length of "PROXY "
 
 fn bytes_to_str(input: &[u8]) -> nom::IResult<&[u8], &str> {
     str::from_utf8(input).map(|s| (input, s)).map_err(|_| {
@@ -137,7 +136,6 @@ pub(crate) fn parse_proxy_hdr_v1(input_data: &[u8]) -> nom::IResult<&[u8], Proxy
         // Note that we use STREAMING here so that we MAY return that we need more data.
         nom::character::streaming::not_line_ending(input_data)?
     };
-
     // Check that we HAVE the crlf - this is because not line ending also matches on \n.
     let (_excess, ignore_crlf) = if data_complete {
         nom::character::complete::crlf(ignore_crlf)?
@@ -314,6 +312,26 @@ mod tests {
         let _ = tracing_subscriber::fmt::try_init();
 
         let data = "PROXY TCP4 192.24.10.10 10.0.0.0 5789 80\r\nextra_data";
+
+        let (took, hdr) = ProxyHdrV1::parse(data.as_bytes()).unwrap();
+        assert_eq!(took, 42);
+
+        tracing::debug!(?hdr);
+
+        assert_eq!(hdr.protocol, Protocol::TcpV4);
+        assert_eq!(
+            hdr.address,
+            Address::V4 {
+                src: SocketAddrV4::from_str("192.24.10.10:5789").unwrap(),
+                dst: SocketAddrV4::from_str("10.0.0.0:80").unwrap(),
+            }
+        );
+    }
+    #[test]
+    fn request_proxyv1_v4_basic_nodata() {
+        let _ = tracing_subscriber::fmt::try_init();
+
+        let data = "PROXY TCP4 192.24.10.10 10.0.0.0 5789 80\r\n";
 
         let (took, hdr) = ProxyHdrV1::parse(data.as_bytes()).unwrap();
         assert_eq!(took, 42);

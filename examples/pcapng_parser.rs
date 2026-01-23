@@ -121,7 +121,7 @@ fn handle_epb(block: EnhancedPacketBlock<'_>, if_linktypes: &mut [Linktype]) {
             // payload time!
 
             let payload = bytes[byte_offset..].to_vec();
-            if payload.len() == 0 {
+            if payload.is_empty() {
                 println!(" No payload");
                 return;
             }
