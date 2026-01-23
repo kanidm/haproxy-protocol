@@ -16,15 +16,26 @@ fn handle_epb(block: EnhancedPacketBlock<'_>, if_linktypes: &mut [Linktype]) {
         block.caplen as usize,
     ) {
         let bytes = match data {
-            PacketData::L3(_, bytes) => bytes,
-            PacketData::L2(bytes) => bytes,
-            PacketData::L4(_, bytes) => bytes,
+            PacketData::L3(_, bytes) => {
+                print!("L3 ");
+                bytes
+            }
+            PacketData::L2(bytes) => {
+                print!("L2 ");
+                bytes
+            }
+            PacketData::L4(_, bytes) => {
+                print!("L4 ");
+                bytes
+            }
             PacketData::Unsupported(_) => {
                 eprintln!("Unsupported packet data: {:?}", block);
                 return;
             }
         };
+
         let mut byte_offset = 0;
+
         if bytes.len() >= 14 {
             if bytes[12] == 0x08 && bytes[13] == 0x00 {
                 print!("IPv4");
@@ -32,8 +43,13 @@ fn handle_epb(block: EnhancedPacketBlock<'_>, if_linktypes: &mut [Linktype]) {
             } else if bytes[12] == 0x86 && bytes[13] == 0xdd {
                 println!("IPv6 packet, haven't implemented parsing yet, skipping");
                 return;
+            } else if bytes[12..14] == [0x7f, 0x00] {
+                print!("Loopback packet ");
             } else {
-                println!("Non IP packet, skipping");
+                println!(
+                    "Unsupported packet, skipping! Ethertype: {:02x}{:02x}",
+                    bytes[12], bytes[13]
+                );
                 return;
             }
         }
@@ -52,8 +68,7 @@ fn handle_epb(block: EnhancedPacketBlock<'_>, if_linktypes: &mut [Linktype]) {
                 return;
             }
         }
-        let ip_header_length = header_length as usize * 4;
-        byte_offset += ip_header_length;
+        byte_offset += header_length as usize * 4;
         if bytes.len() >= byte_offset + 20 {
             let src_port = (bytes[byte_offset] as u16) << 8 | (bytes[byte_offset + 1] as u16);
             let dst_port = (bytes[byte_offset + 2] as u16) << 8 | (bytes[byte_offset + 3] as u16);
@@ -93,19 +108,24 @@ fn handle_epb(block: EnhancedPacketBlock<'_>, if_linktypes: &mut [Linktype]) {
         byte_offset += tcp_header_length as usize;
         if flags & 0x04 != 0 {
             println!(" RST packet, skipping payload");
+            return;
         } else if flags == 0x12 {
             println!(" SYN-ACK packet, skipping payload");
+            return;
         } else if flags == 0x02 {
             println!(" SYN flag set, skipping payload");
+            return;
         } else if byte_offset == block.caplen as usize {
-            print!(" No payload");
+            println!(" No payload");
         } else {
             // payload time!
-            let payload_length = block.caplen as usize - byte_offset;
-            println!(" Payload length: {}", payload_length);
 
-            let payload = &bytes[byte_offset..byte_offset + payload_length];
-            let payload_as_ascii = String::from_utf8_lossy(payload);
+            let payload = bytes[byte_offset..].to_vec();
+            if payload.len() == 0 {
+                println!(" No payload");
+                return;
+            }
+            let payload_as_ascii = String::from_utf8_lossy(&payload);
             println!(
                 "Payload as ascii:\n##############\n{}\n#############",
                 payload_as_ascii
@@ -113,12 +133,27 @@ fn handle_epb(block: EnhancedPacketBlock<'_>, if_linktypes: &mut [Linktype]) {
                     .replace('\n', r#"\n"#)
             );
             println!("Payload as hex:");
+            let mut hexstring = String::new();
+            let mut ascii_string = String::new();
             for byte in payload.iter() {
-                print!("{:02x} ", byte);
+                hexstring.push_str(&format!("{:02x} ", byte));
+                if byte.is_ascii_graphic() || *byte == b' ' {
+                    ascii_string.push(*byte as char);
+                    ascii_string.push_str("  ");
+                } else if byte == &0x0d {
+                    ascii_string.push_str(r#"\r "#);
+                } else if byte == &0x0a {
+                    ascii_string.push_str(r#"\n "#);
+                } else {
+                    ascii_string.push_str("🧐 ");
+                }
             }
-            println!();
-            println!("v1: {:?}", ProxyHdrV1::parse(payload));
-            println!("v2: {:?}", ProxyHdrV2::parse(payload));
+            println!("{}", hexstring);
+            println!("{}", ascii_string);
+            println!("\nAttempting to parse as proxy headers:");
+            println!("v1: {:?}", ProxyHdrV1::parse(&payload));
+            println!("v2: {:?}", ProxyHdrV2::parse(&payload));
+            println!("############ End of payload ###########");
         }
 
         println!();
@@ -171,7 +206,7 @@ pub fn main() {
                                 eprintln!("Unhandled block type: {:?}", block);
                             }
                         }
-                        println!();
+                        // println!();
                     }
                 }
 
