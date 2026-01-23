@@ -101,11 +101,10 @@ pub(crate) fn parse_proxy_hdr_v2(input_data: &[u8]) -> nom::IResult<&[u8], Proxy
     ))
 }
 
-#[cfg(feature = "tokio")]
-pub const V1_MIN_LEN: usize = 15;
-#[cfg(feature = "tokio")]
+#[cfg(any(feature = "tokio", test))]
+pub const V1_MIN_LEN: usize = 32; // `PROXY TCP4 1.1.1.1 2.2.2.2 1 1rn`
 pub const V1_MAX_LEN: usize = 107;
-const V1_MAX_WORK_LEN: usize = 107 - 6;
+const V1_MAX_WORK_LEN: usize = V1_MAX_LEN - 6; // 6 is the length of "PROXY "
 
 fn bytes_to_str(input: &[u8]) -> nom::IResult<&[u8], &str> {
     str::from_utf8(input).map(|s| (input, s)).map_err(|_| {
@@ -121,9 +120,13 @@ pub(crate) fn parse_proxy_hdr_v1(input_data: &[u8]) -> nom::IResult<&[u8], Proxy
     let (input_data, _magic) = nom::bytes::streaming::tag("PROXY ")(input_data)
         .inspect_err(|err| debug!(error=%err, "Missing Proxy v1 signature"))?;
 
+    let data_complete = input_data.len() > V1_MAX_WORK_LEN;
+
+    tracing::trace!(?data_complete, ?input_data);
+
     // First, limit the input data to the maximum length of the header. We have to setup our
     // "return" array here that defines how much data we are actually taking from the input
-    let (ignore_crlf, working_data) = if input_data.len() > V1_MAX_WORK_LEN {
+    let (ignore_crlf, working_data) = if data_complete {
         // Limit the input length.
         let working_data = &input_data[..V1_MAX_WORK_LEN];
 
@@ -133,9 +136,12 @@ pub(crate) fn parse_proxy_hdr_v1(input_data: &[u8]) -> nom::IResult<&[u8], Proxy
         // Note that we use STREAMING here so that we MAY return that we need more data.
         nom::character::streaming::not_line_ending(input_data)?
     };
-
     // Check that we HAVE the crlf - this is because not line ending also matches on \n.
-    let (_excess, ignore_crlf) = nom::character::complete::crlf(ignore_crlf)?;
+    let (_excess, ignore_crlf) = if data_complete {
+        nom::character::complete::crlf(ignore_crlf)?
+    } else {
+        nom::character::streaming::crlf(ignore_crlf)?
+    };
 
     // This MUST hold true as both ignore_crlf and working_data are subslices of the
     // original input_data.
@@ -321,6 +327,26 @@ mod tests {
             }
         );
     }
+    #[test]
+    fn request_proxyv1_v4_basic_nodata() {
+        let _ = tracing_subscriber::fmt::try_init();
+
+        let data = "PROXY TCP4 192.24.10.10 10.0.0.0 5789 80\r\n";
+
+        let (took, hdr) = ProxyHdrV1::parse(data.as_bytes()).unwrap();
+        assert_eq!(took, 42);
+
+        tracing::debug!(?hdr);
+
+        assert_eq!(hdr.protocol, Protocol::TcpV4);
+        assert_eq!(
+            hdr.address,
+            Address::V4 {
+                src: SocketAddrV4::from_str("192.24.10.10:5789").unwrap(),
+                dst: SocketAddrV4::from_str("10.0.0.0:80").unwrap(),
+            }
+        );
+    }
 
     #[test]
     fn request_proxyv1_v4_max() {
@@ -425,5 +451,29 @@ mod tests {
         let err = ProxyHdrV1::parse(data.as_bytes()).expect_err("Should fail!!!");
 
         assert!(matches!(err, Error::Invalid));
+    }
+
+    #[test]
+    fn request_proxyv1_kanidm_4084() {
+        let _ = tracing_subscriber::fmt::try_init();
+
+        // hex
+        // 50524f585920544350342039312e3232312e3133382e33332039312e3232312e3133382e313036203437373830203633360d0a
+
+        let data = "PROXY TCP4 91.221.138.33 91.221.138.106 47780 636\r\n";
+
+        let (took, hdr) = ProxyHdrV1::parse(data.as_bytes()).unwrap();
+        assert_eq!(took, 51);
+
+        tracing::debug!(?hdr);
+
+        assert_eq!(hdr.protocol, Protocol::TcpV4);
+        assert_eq!(
+            hdr.address,
+            Address::V4 {
+                src: SocketAddrV4::from_str("91.221.138.33:47780").unwrap(),
+                dst: SocketAddrV4::from_str("91.221.138.106:636").unwrap(),
+            }
+        );
     }
 }

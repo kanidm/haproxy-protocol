@@ -13,7 +13,7 @@
 use crate::parse::{parse_proxy_hdr_v1, parse_proxy_hdr_v2};
 use std::num::NonZeroUsize;
 
-#[cfg(feature = "tokio")]
+#[cfg(any(test, feature = "tokio"))]
 use crate::parse::{V1_MAX_LEN, V1_MIN_LEN};
 
 const NZ_ONE: NonZeroUsize = NonZeroUsize::new(1).expect("Invalid compile time constant");
@@ -110,7 +110,7 @@ impl ProxyHdrV2 {
                 Err(Error::Invalid)
             }
             Err(nom::Err::Failure(err)) => {
-                tracing::error!(?err);
+                tracing::error!(?err, "parser failure handling proxy v2 header");
                 Err(Error::Invalid)
             }
         }
@@ -160,7 +160,7 @@ impl ProxyHdrV1 {
                 Err(Error::Invalid)
             }
             Err(nom::Err::Failure(err)) => {
-                tracing::error!(?err);
+                tracing::error!(?err, "parser failure handling proxy v1 header");
                 Err(Error::Invalid)
             }
         }
@@ -177,7 +177,7 @@ impl ProxyHdrV1 {
     }
 }
 
-#[cfg(feature = "tokio")]
+#[cfg(any(feature = "tokio", test))]
 #[derive(Debug)]
 pub enum AsyncReadError {
     Io(std::io::Error),
@@ -187,7 +187,7 @@ pub enum AsyncReadError {
     InconsistentRead,
 }
 
-#[cfg(feature = "tokio")]
+#[cfg(any(feature = "tokio", test))]
 impl ProxyHdrV2 {
     pub async fn parse_from_read<S>(mut stream: S) -> Result<(S, Self), AsyncReadError>
     where
@@ -217,7 +217,7 @@ impl ProxyHdrV2 {
                 // is too large. Nice try hackers.
                 if resize_to > HDR_SIZE_LIMIT {
                     error!(
-                        "proxy header request was larger than {} bytes, refusing to proceed.",
+                        "proxy v2 header request was larger than {} bytes, refusing to proceed.",
                         HDR_SIZE_LIMIT
                     );
                     return Err(AsyncReadError::RequestTooLarge);
@@ -226,12 +226,12 @@ impl ProxyHdrV2 {
             }
             Err(Error::Invalid) => {
                 debug!(proxy_binary_dump = %hex::encode(&buf));
-                error!("proxy header was invalid");
+                error!("proxy v2 header was invalid");
                 return Err(AsyncReadError::Invalid);
             }
             Err(Error::UnableToComplete) => {
                 debug!(proxy_binary_dump = %hex::encode(&buf));
-                error!("proxy header was incomplete");
+                error!("proxy v2 header was incomplete");
                 return Err(AsyncReadError::UnableToComplete);
             }
         };
@@ -245,7 +245,7 @@ impl ProxyHdrV2 {
         match ProxyHdrV2::parse(&buf) {
             Ok((hdr_took, _)) if hdr_took != took => {
                 // We took inconsistent byte amounts, error.
-                error!("proxy header read an inconsistent amount from stream.");
+                error!("proxy v2 header read an inconsistent amount from stream.");
                 Err(AsyncReadError::InconsistentRead)
             }
             Ok((_, hdr)) =>
@@ -254,24 +254,24 @@ impl ProxyHdrV2 {
                 Ok((stream, hdr))
             }
             Err(Error::Incomplete { need: _ }) => {
-                error!("proxy header could not be read to the end.");
+                error!("proxy v2 header could not be read to the end.");
                 Err(AsyncReadError::UnableToComplete)
             }
             Err(Error::Invalid) => {
                 debug!(proxy_binary_dump = %hex::encode(&buf));
-                error!("proxy header was invalid");
+                error!("proxy v2 header was invalid");
                 Err(AsyncReadError::Invalid)
             }
             Err(Error::UnableToComplete) => {
                 debug!(proxy_binary_dump = %hex::encode(&buf));
-                error!("proxy header was incomplete");
+                error!("proxy v2 header was incomplete");
                 Err(AsyncReadError::UnableToComplete)
             }
         }
     }
 }
 
-#[cfg(feature = "tokio")]
+#[cfg(any(feature = "tokio", test))]
 impl ProxyHdrV1 {
     pub async fn parse_from_read<S>(mut stream: S) -> Result<(S, Self), AsyncReadError>
     where
@@ -290,11 +290,17 @@ impl ProxyHdrV1 {
             .await
             .map_err(AsyncReadError::Io)?;
 
+        // Limit the view window to how many bytes we have.
+
         loop {
-            match ProxyHdrV1::parse(&buf) {
+            if took > buf.len() {
+                error!("proxy v1 header read over ran the buffer allocation.");
+                return Err(AsyncReadError::Invalid);
+            }
+            match ProxyHdrV1::parse(&buf[..took]) {
                 Ok((hdr_took, _)) if hdr_took != took => {
                     // We took inconsistent byte amounts, error.
-                    error!("proxy header read an inconsistent amount from stream.");
+                    error!("proxy v1 header read an inconsistent amount from stream.");
                     return Err(AsyncReadError::InconsistentRead);
                 }
                 Ok((_, hdr)) =>
@@ -314,15 +320,182 @@ impl ProxyHdrV1 {
                 }
                 Err(Error::Invalid) => {
                     debug!(proxy_binary_dump = %hex::encode(buf));
-                    error!("proxy header was invalid");
+                    error!("proxy v1 header was invalid");
                     return Err(AsyncReadError::Invalid);
                 }
                 Err(Error::UnableToComplete) => {
                     debug!(proxy_binary_dump = %hex::encode(buf));
-                    error!("proxy header was incomplete");
+                    error!("proxy v1 header was incomplete");
                     return Err(AsyncReadError::UnableToComplete);
                 }
             }
         } // end loop
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::{Address, Command, Protocol, ProxyHdrV1, ProxyHdrV2};
+    use std::net::SocketAddrV4;
+    use std::str::FromStr;
+
+    #[tokio::test]
+    async fn proxyv1_stream_parse() {
+        let _ = tracing_subscriber::fmt::try_init();
+
+        let data = "PROXY TCP4 91.221.138.33 91.221.138.106 47780 636\r\n";
+
+        let (_, hdr) = ProxyHdrV1::parse_from_read(data.as_bytes()).await.unwrap();
+
+        tracing::debug!(?hdr);
+
+        assert_eq!(hdr.protocol, Protocol::TcpV4);
+        assert_eq!(
+            hdr.address,
+            Address::V4 {
+                src: SocketAddrV4::from_str("91.221.138.33:47780").unwrap(),
+                dst: SocketAddrV4::from_str("91.221.138.106:636").unwrap(),
+            }
+        );
+    }
+
+    #[tokio::test]
+    async fn proxyv2_stream_parse() {
+        let _ = tracing_subscriber::fmt::try_init();
+
+        let sample = hex::decode("0d0a0d0a000d0a515549540a2111000cac180c76ac180b8fcdcb027d")
+            .expect("valid hex");
+
+        let (_, hdr) = ProxyHdrV2::parse_from_read(sample.as_slice())
+            .await
+            .expect("should parse v4 addr");
+
+        tracing::debug!(?hdr);
+
+        assert_eq!(hdr.command, Command::Proxy);
+        assert_eq!(hdr.protocol, Protocol::TcpV4);
+        assert_eq!(
+            hdr.address,
+            Address::V4 {
+                src: SocketAddrV4::from_str("172.24.12.118:52683").expect("valid addr"),
+                dst: SocketAddrV4::from_str("172.24.11.143:637").expect("valid addr"),
+            }
+        );
+    }
+
+    #[cfg(all(test, feature = "tokio"))]
+    mod async_stream_tests {
+        use super::*;
+        use std::net::{SocketAddrV4, SocketAddrV6};
+        use std::str::FromStr;
+        use tokio::io::{AsyncReadExt, AsyncWrite, AsyncWriteExt};
+
+        async fn write_in_chunks<W>(mut writer: W, data: &[u8], chunk_sizes: &[usize])
+        where
+            W: AsyncWrite + Unpin,
+        {
+            let mut offset = 0;
+            for &size in chunk_sizes {
+                if offset >= data.len() {
+                    break;
+                }
+                let end = (offset + size).min(data.len());
+                #[allow(clippy::expect_used)] // because test function
+                writer
+                    .write_all(&data[offset..end])
+                    .await
+                    .expect("chunk write should succeed");
+                tokio::task::yield_now().await;
+                offset = end;
+            }
+
+            if offset < data.len() {
+                #[allow(clippy::expect_used)] // because test function
+                writer
+                    .write_all(&data[offset..])
+                    .await
+                    .expect("final write should succeed");
+            }
+        }
+
+        #[tokio::test]
+        async fn tokio_stream_parse_v2_chunks() {
+            let _ = tracing_subscriber::fmt::try_init();
+
+            let sample = hex::decode("0d0a0d0a000d0a515549540a2111000cac180c76ac180b8fcdcb027d")
+                .expect("valid hex");
+            let payload = b"hello";
+            let mut full = sample.clone();
+            full.extend_from_slice(payload);
+
+            let (client, server) = tokio::io::duplex(32);
+
+            let writer = tokio::spawn(async move {
+                write_in_chunks(server, &full, &[5, 3, 1, 7, 2]).await;
+            });
+
+            let (mut stream, hdr) = ProxyHdrV2::parse_from_read(client)
+                .await
+                .expect("should parse v2 from stream");
+
+            let mut extra = vec![0; payload.len()];
+            stream
+                .read_exact(&mut extra)
+                .await
+                .expect("should read extra payload");
+
+            writer.await.expect("writer task should finish");
+
+            assert_eq!(extra.as_slice(), payload);
+            assert_eq!(hdr.command, Command::Proxy);
+            assert_eq!(hdr.protocol, Protocol::TcpV4);
+            assert_eq!(
+                hdr.address,
+                Address::V4 {
+                    src: SocketAddrV4::from_str("172.24.12.118:52683").expect("valid addr"),
+                    dst: SocketAddrV4::from_str("172.24.11.143:637").expect("valid addr"),
+                }
+            );
+        }
+
+        #[tokio::test]
+        async fn tokio_stream_parse_v1_chunks() {
+            let _ = tracing_subscriber::fmt::try_init();
+
+            let header = b"PROXY TCP6 ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff 65535 65535\r\n";
+            let payload = b"more_data";
+            let mut full = header.to_vec();
+            full.extend_from_slice(payload);
+
+            let (client, server) = tokio::io::duplex(64);
+
+            let writer = tokio::spawn(async move {
+                write_in_chunks(server, &full, &[4, 1, 8, 2, 3, 5, 1]).await;
+            });
+
+            let (mut stream, hdr) = ProxyHdrV1::parse_from_read(client)
+                .await
+                .expect("should parse v1 from stream");
+
+            let mut extra = vec![0; payload.len()];
+            stream
+                .read_exact(&mut extra)
+                .await
+                .expect("should read extra payload");
+
+            writer.await.expect("writer task should finish");
+
+            assert_eq!(extra.as_slice(), payload);
+            assert_eq!(hdr.protocol, Protocol::TcpV6);
+            assert_eq!(
+                hdr.address,
+                Address::V6 {
+                    src: SocketAddrV6::from_str("[ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff]:65535")
+                        .expect("valid addr"),
+                    dst: SocketAddrV6::from_str("[ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff]:65535")
+                        .expect("valid addr"),
+                }
+            );
+        }
     }
 }
