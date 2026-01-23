@@ -177,122 +177,6 @@ impl ProxyHdrV1 {
     }
 }
 
-#[cfg(all(test, feature = "tokio"))]
-mod async_stream_tests {
-    use super::*;
-    use std::net::{SocketAddrV4, SocketAddrV6};
-    use std::str::FromStr;
-    use tokio::io::{AsyncReadExt, AsyncWrite, AsyncWriteExt};
-
-    async fn write_in_chunks<W>(mut writer: W, data: &[u8], chunk_sizes: &[usize])
-    where
-        W: AsyncWrite + Unpin,
-    {
-        let mut offset = 0;
-        for &size in chunk_sizes {
-            if offset >= data.len() {
-                break;
-            }
-            let end = (offset + size).min(data.len());
-            #[allow(clippy::expect_used)] // because test function
-            writer
-                .write_all(&data[offset..end])
-                .await
-                .expect("chunk write should succeed");
-            tokio::task::yield_now().await;
-            offset = end;
-        }
-
-        if offset < data.len() {
-            #[allow(clippy::expect_used)] // because test function
-            writer
-                .write_all(&data[offset..])
-                .await
-                .expect("final write should succeed");
-        }
-    }
-
-    #[tokio::test]
-    async fn tokio_stream_parse_v2_chunks() {
-        let _ = tracing_subscriber::fmt::try_init();
-
-        let sample = hex::decode("0d0a0d0a000d0a515549540a2111000cac180c76ac180b8fcdcb027d")
-            .expect("valid hex");
-        let payload = b"hello";
-        let mut full = sample.clone();
-        full.extend_from_slice(payload);
-
-        let (client, server) = tokio::io::duplex(32);
-
-        let writer = tokio::spawn(async move {
-            write_in_chunks(server, &full, &[5, 3, 1, 7, 2]).await;
-        });
-
-        let (mut stream, hdr) = ProxyHdrV2::parse_from_read(client)
-            .await
-            .expect("should parse v2 from stream");
-
-        let mut extra = vec![0; payload.len()];
-        stream
-            .read_exact(&mut extra)
-            .await
-            .expect("should read extra payload");
-
-        writer.await.expect("writer task should finish");
-
-        assert_eq!(extra.as_slice(), payload);
-        assert_eq!(hdr.command, Command::Proxy);
-        assert_eq!(hdr.protocol, Protocol::TcpV4);
-        assert_eq!(
-            hdr.address,
-            Address::V4 {
-                src: SocketAddrV4::from_str("172.24.12.118:52683").expect("valid addr"),
-                dst: SocketAddrV4::from_str("172.24.11.143:637").expect("valid addr"),
-            }
-        );
-    }
-
-    #[tokio::test]
-    async fn tokio_stream_parse_v1_chunks() {
-        let _ = tracing_subscriber::fmt::try_init();
-
-        let header = b"PROXY TCP6 ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff 65535 65535\r\n";
-        let payload = b"more_data";
-        let mut full = header.to_vec();
-        full.extend_from_slice(payload);
-
-        let (client, server) = tokio::io::duplex(64);
-
-        let writer = tokio::spawn(async move {
-            write_in_chunks(server, &full, &[4, 1, 8, 2, 3, 5, 1]).await;
-        });
-
-        let (mut stream, hdr) = ProxyHdrV1::parse_from_read(client)
-            .await
-            .expect("should parse v1 from stream");
-
-        let mut extra = vec![0; payload.len()];
-        stream
-            .read_exact(&mut extra)
-            .await
-            .expect("should read extra payload");
-
-        writer.await.expect("writer task should finish");
-
-        assert_eq!(extra.as_slice(), payload);
-        assert_eq!(hdr.protocol, Protocol::TcpV6);
-        assert_eq!(
-            hdr.address,
-            Address::V6 {
-                src: SocketAddrV6::from_str("[ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff]:65535")
-                    .expect("valid addr"),
-                dst: SocketAddrV6::from_str("[ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff]:65535")
-                    .expect("valid addr"),
-            }
-        );
-    }
-}
-
 #[cfg(any(feature = "tokio", test))]
 #[derive(Debug)]
 pub enum AsyncReadError {
@@ -497,5 +381,121 @@ mod tests {
                 dst: SocketAddrV4::from_str("172.24.11.143:637").expect("valid addr"),
             }
         );
+    }
+
+    #[cfg(all(test, feature = "tokio"))]
+    mod async_stream_tests {
+        use super::*;
+        use std::net::{SocketAddrV4, SocketAddrV6};
+        use std::str::FromStr;
+        use tokio::io::{AsyncReadExt, AsyncWrite, AsyncWriteExt};
+
+        async fn write_in_chunks<W>(mut writer: W, data: &[u8], chunk_sizes: &[usize])
+        where
+            W: AsyncWrite + Unpin,
+        {
+            let mut offset = 0;
+            for &size in chunk_sizes {
+                if offset >= data.len() {
+                    break;
+                }
+                let end = (offset + size).min(data.len());
+                #[allow(clippy::expect_used)] // because test function
+                writer
+                    .write_all(&data[offset..end])
+                    .await
+                    .expect("chunk write should succeed");
+                tokio::task::yield_now().await;
+                offset = end;
+            }
+
+            if offset < data.len() {
+                #[allow(clippy::expect_used)] // because test function
+                writer
+                    .write_all(&data[offset..])
+                    .await
+                    .expect("final write should succeed");
+            }
+        }
+
+        #[tokio::test]
+        async fn tokio_stream_parse_v2_chunks() {
+            let _ = tracing_subscriber::fmt::try_init();
+
+            let sample = hex::decode("0d0a0d0a000d0a515549540a2111000cac180c76ac180b8fcdcb027d")
+                .expect("valid hex");
+            let payload = b"hello";
+            let mut full = sample.clone();
+            full.extend_from_slice(payload);
+
+            let (client, server) = tokio::io::duplex(32);
+
+            let writer = tokio::spawn(async move {
+                write_in_chunks(server, &full, &[5, 3, 1, 7, 2]).await;
+            });
+
+            let (mut stream, hdr) = ProxyHdrV2::parse_from_read(client)
+                .await
+                .expect("should parse v2 from stream");
+
+            let mut extra = vec![0; payload.len()];
+            stream
+                .read_exact(&mut extra)
+                .await
+                .expect("should read extra payload");
+
+            writer.await.expect("writer task should finish");
+
+            assert_eq!(extra.as_slice(), payload);
+            assert_eq!(hdr.command, Command::Proxy);
+            assert_eq!(hdr.protocol, Protocol::TcpV4);
+            assert_eq!(
+                hdr.address,
+                Address::V4 {
+                    src: SocketAddrV4::from_str("172.24.12.118:52683").expect("valid addr"),
+                    dst: SocketAddrV4::from_str("172.24.11.143:637").expect("valid addr"),
+                }
+            );
+        }
+
+        #[tokio::test]
+        async fn tokio_stream_parse_v1_chunks() {
+            let _ = tracing_subscriber::fmt::try_init();
+
+            let header = b"PROXY TCP6 ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff 65535 65535\r\n";
+            let payload = b"more_data";
+            let mut full = header.to_vec();
+            full.extend_from_slice(payload);
+
+            let (client, server) = tokio::io::duplex(64);
+
+            let writer = tokio::spawn(async move {
+                write_in_chunks(server, &full, &[4, 1, 8, 2, 3, 5, 1]).await;
+            });
+
+            let (mut stream, hdr) = ProxyHdrV1::parse_from_read(client)
+                .await
+                .expect("should parse v1 from stream");
+
+            let mut extra = vec![0; payload.len()];
+            stream
+                .read_exact(&mut extra)
+                .await
+                .expect("should read extra payload");
+
+            writer.await.expect("writer task should finish");
+
+            assert_eq!(extra.as_slice(), payload);
+            assert_eq!(hdr.protocol, Protocol::TcpV6);
+            assert_eq!(
+                hdr.address,
+                Address::V6 {
+                    src: SocketAddrV6::from_str("[ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff]:65535")
+                        .expect("valid addr"),
+                    dst: SocketAddrV6::from_str("[ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff]:65535")
+                        .expect("valid addr"),
+                }
+            );
+        }
     }
 }
