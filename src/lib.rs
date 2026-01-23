@@ -13,7 +13,7 @@
 use crate::parse::{parse_proxy_hdr_v1, parse_proxy_hdr_v2};
 use std::num::NonZeroUsize;
 
-#[cfg(feature = "tokio")]
+#[cfg(any(test, feature = "tokio"))]
 use crate::parse::{V1_MAX_LEN, V1_MIN_LEN};
 
 const NZ_ONE: NonZeroUsize = NonZeroUsize::new(1).expect("Invalid compile time constant");
@@ -177,7 +177,7 @@ impl ProxyHdrV1 {
     }
 }
 
-#[cfg(feature = "tokio")]
+#[cfg(any(feature = "tokio", test))]
 #[derive(Debug)]
 pub enum AsyncReadError {
     Io(std::io::Error),
@@ -187,7 +187,7 @@ pub enum AsyncReadError {
     InconsistentRead,
 }
 
-#[cfg(feature = "tokio")]
+#[cfg(any(feature = "tokio", test))]
 impl ProxyHdrV2 {
     pub async fn parse_from_read<S>(mut stream: S) -> Result<(S, Self), AsyncReadError>
     where
@@ -271,7 +271,7 @@ impl ProxyHdrV2 {
     }
 }
 
-#[cfg(feature = "tokio")]
+#[cfg(any(feature = "tokio", test))]
 impl ProxyHdrV1 {
     pub async fn parse_from_read<S>(mut stream: S) -> Result<(S, Self), AsyncReadError>
     where
@@ -290,8 +290,15 @@ impl ProxyHdrV1 {
             .await
             .map_err(AsyncReadError::Io)?;
 
+        // Limit the view window to how many bytes we have.
+
         loop {
-            match ProxyHdrV1::parse(&buf) {
+            if took > buf.len() {
+                error!("proxy v1 header read over ran the buffer allocation.");
+                return Err(AsyncReadError::Invalid);
+            }
+            let view = &buf[..took];
+            match ProxyHdrV1::parse(view) {
                 Ok((hdr_took, _)) if hdr_took != took => {
                     // We took inconsistent byte amounts, error.
                     error!("proxy v1 header read an inconsistent amount from stream.");
@@ -324,5 +331,56 @@ impl ProxyHdrV1 {
                 }
             }
         } // end loop
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::{Address, Command, Protocol, ProxyHdrV1, ProxyHdrV2};
+    use std::net::SocketAddrV4;
+    use std::str::FromStr;
+
+    #[tokio::test]
+    async fn proxyv1_stream_parse() {
+        let _ = tracing_subscriber::fmt::try_init();
+
+        let data = "PROXY TCP4 91.221.138.33 91.221.138.106 47780 636\r\n";
+
+        let (_, hdr) = ProxyHdrV1::parse_from_read(data.as_bytes()).await.unwrap();
+
+        tracing::debug!(?hdr);
+
+        assert_eq!(hdr.protocol, Protocol::TcpV4);
+        assert_eq!(
+            hdr.address,
+            Address::V4 {
+                src: SocketAddrV4::from_str("91.221.138.33:47780").unwrap(),
+                dst: SocketAddrV4::from_str("91.221.138.106:636").unwrap(),
+            }
+        );
+    }
+
+    #[tokio::test]
+    async fn proxyv2_stream_parse() {
+        let _ = tracing_subscriber::fmt::try_init();
+
+        let sample = hex::decode("0d0a0d0a000d0a515549540a2111000cac180c76ac180b8fcdcb027d")
+            .expect("valid hex");
+
+        let (_, hdr) = ProxyHdrV2::parse_from_read(sample.as_slice())
+            .await
+            .expect("should parse v4 addr");
+
+        tracing::debug!(?hdr);
+
+        assert_eq!(hdr.command, Command::Proxy);
+        assert_eq!(hdr.protocol, Protocol::TcpV4);
+        assert_eq!(
+            hdr.address,
+            Address::V4 {
+                src: SocketAddrV4::from_str("172.24.12.118:52683").expect("valid addr"),
+                dst: SocketAddrV4::from_str("172.24.11.143:637").expect("valid addr"),
+            }
+        );
     }
 }

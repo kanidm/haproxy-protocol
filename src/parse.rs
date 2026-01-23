@@ -101,9 +101,9 @@ pub(crate) fn parse_proxy_hdr_v2(input_data: &[u8]) -> nom::IResult<&[u8], Proxy
     ))
 }
 
-#[cfg(feature = "tokio")]
+#[cfg(any(test, feature = "tokio"))]
 pub const V1_MIN_LEN: usize = 15;
-#[cfg(feature = "tokio")]
+#[cfg(any(test, feature = "tokio"))]
 pub const V1_MAX_LEN: usize = 107;
 const V1_MAX_WORK_LEN: usize = 107 - 6;
 
@@ -121,9 +121,13 @@ pub(crate) fn parse_proxy_hdr_v1(input_data: &[u8]) -> nom::IResult<&[u8], Proxy
     let (input_data, _magic) = nom::bytes::streaming::tag("PROXY ")(input_data)
         .inspect_err(|err| debug!(error=%err, "Missing Proxy v1 signature"))?;
 
+    let data_complete = input_data.len() > V1_MAX_WORK_LEN;
+
+    tracing::trace!(?data_complete, ?input_data);
+
     // First, limit the input data to the maximum length of the header. We have to setup our
     // "return" array here that defines how much data we are actually taking from the input
-    let (ignore_crlf, working_data) = if input_data.len() > V1_MAX_WORK_LEN {
+    let (ignore_crlf, working_data) = if data_complete {
         // Limit the input length.
         let working_data = &input_data[..V1_MAX_WORK_LEN];
 
@@ -135,7 +139,11 @@ pub(crate) fn parse_proxy_hdr_v1(input_data: &[u8]) -> nom::IResult<&[u8], Proxy
     };
 
     // Check that we HAVE the crlf - this is because not line ending also matches on \n.
-    let (_excess, ignore_crlf) = nom::character::complete::crlf(ignore_crlf)?;
+    let (_excess, ignore_crlf) = if data_complete {
+        nom::character::complete::crlf(ignore_crlf)?
+    } else {
+        nom::character::streaming::crlf(ignore_crlf)?
+    };
 
     // This MUST hold true as both ignore_crlf and working_data are subslices of the
     // original input_data.
